@@ -12,6 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
+// Legacy activity kept for fallback. OverlayGate is the active MVP interruption flow.
+@Deprecated("Legacy gate activity. OverlayGate is used by the service.")
 class GateActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
