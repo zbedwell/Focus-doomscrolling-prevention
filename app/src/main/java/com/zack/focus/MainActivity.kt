@@ -26,8 +26,10 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
@@ -243,7 +245,7 @@ private fun HomeScreen(focusStore: FocusStore, onEndFocus: () -> Unit) {
     val context = LocalContext.current
     var focusActive by remember { mutableStateOf(focusStore.isFocusModeActive()) }
     val message = remember { MotivationMessages.getRandom() }
-    val blockedPackages = remember { focusStore.getBlockedPackages() }
+    var blockedPackages by remember { mutableStateOf(focusStore.getBlockedPackages()) }
 
     Column(
         modifier = Modifier
@@ -320,13 +322,52 @@ private fun HomeScreen(focusStore: FocusStore, onEndFocus: () -> Unit) {
 
         Spacer(Modifier.height(24.dp))
 
-        // Blocked apps list
-        Text("Blocked apps", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-        blockedPackages.forEach { pkg ->
-            val label = FocusStore.BLOCKED_APP_LABELS[pkg] ?: pkg
-            Text("• $label", style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(vertical = 2.dp))
+        // Blocked apps toggles
+        val allApps = FocusStore.DEFAULT_BLOCKED_PACKAGES.toList()
+        val allChecked = allApps.all { it in blockedPackages }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                // Block All master switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Block all", style = MaterialTheme.typography.titleMedium)
+                    Switch(
+                        checked = allChecked,
+                        onCheckedChange = { on ->
+                            val updated = if (on) allApps.toSet() else emptySet()
+                            focusStore.setBlockedPackages(updated)
+                            blockedPackages = updated
+                        }
+                    )
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+                // Per-app switches
+                allApps.forEach { pkg ->
+                    val label = FocusStore.BLOCKED_APP_LABELS[pkg] ?: pkg
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                        Switch(
+                            checked = pkg in blockedPackages,
+                            onCheckedChange = { on ->
+                                val updated = if (on) blockedPackages + pkg
+                                              else blockedPackages - pkg
+                                focusStore.setBlockedPackages(updated)
+                                blockedPackages = updated
+                            }
+                        )
+                    }
+                }
+            }
         }
 
         Spacer(Modifier.height(16.dp))

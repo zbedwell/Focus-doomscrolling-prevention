@@ -21,6 +21,10 @@ class FocusStore(context: Context) {
     fun getBlockedPackages(): Set<String> =
         prefs.getStringSet(KEY_BLOCKED_PACKAGES, null)?.toSet() ?: DEFAULT_BLOCKED_PACKAGES
 
+    fun setBlockedPackages(packages: Set<String>) {
+        prefs.edit().putStringSet(KEY_BLOCKED_PACKAGES, packages).apply()
+    }
+
     fun isOnboardingComplete(): Boolean = prefs.getBoolean(KEY_ONBOARDING_DONE, false)
 
     fun setOnboardingComplete() {
