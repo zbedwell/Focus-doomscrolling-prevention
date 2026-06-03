@@ -2,23 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Usage access for foreground app detection -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- Foreground service base permission -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
-    <!-- Android 14+ permission for dataSync foreground service type -->
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
         tools:targetApi="34" />
 
-    <!-- Overlay permission (Special app access: "Appear on top") -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- Android 13+ notifications permission (so the ongoing notification can show) -->
     <uses-permission
         android:name="android.permission.POST_NOTIFICATIONS"
         tools:targetApi="33" />
@@ -44,24 +39,15 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".AppSelectionActivity"
-            android:exported="false"
-            android:theme="@style/Theme.Focus" />
-
-        <activity
-            android:name=".FocusTimerActivity"
-            android:exported="false"
-            android:theme="@style/Theme.Focus" />
-
-        <!-- Optional legacy GateActivity: safe to keep, not used by overlay mode -->
+        <!-- Bypass friction flow, launched over blocked apps by the overlay -->
         <activity
             android:name=".GateActivity"
             android:exported="false"
             android:launchMode="singleTask"
             android:excludeFromRecents="true"
             android:showWhenLocked="true"
-            android:turnScreenOn="true" />
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.Focus" />
 
         <service
             android:name=".WatcherService"

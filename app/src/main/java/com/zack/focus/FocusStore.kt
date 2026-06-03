@@ -8,54 +8,51 @@ class FocusStore(context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    fun isFocusModeActive(): Boolean = prefs.getBoolean(KEY_FOCUS_ACTIVE, false)
+
+    fun setFocusModeActive(active: Boolean) {
+        val edit = prefs.edit().putBoolean(KEY_FOCUS_ACTIVE, active)
+        if (active) edit.putLong(KEY_FOCUS_START_MS, System.currentTimeMillis())
+        edit.apply()
+    }
+
+    fun getFocusStartMs(): Long = prefs.getLong(KEY_FOCUS_START_MS, 0L)
+
     fun getBlockedPackages(): Set<String> =
-        prefs.getStringSet(KEY_BLOCKED_PACKAGES, emptySet())?.toSet() ?: emptySet()
+        prefs.getStringSet(KEY_BLOCKED_PACKAGES, null)?.toSet() ?: DEFAULT_BLOCKED_PACKAGES
 
-    fun setBlockedPackage(packageName: String, blocked: Boolean) {
-        val updated = getBlockedPackages().toMutableSet()
-        if (blocked) {
-            updated.add(packageName)
-        } else {
-            updated.remove(packageName)
-        }
-        prefs.edit().putStringSet(KEY_BLOCKED_PACKAGES, updated).apply()
+    fun isOnboardingComplete(): Boolean = prefs.getBoolean(KEY_ONBOARDING_DONE, false)
+
+    fun setOnboardingComplete() {
+        prefs.edit().putBoolean(KEY_ONBOARDING_DONE, true).apply()
     }
 
-    fun startSession25(nowMs: Long) {
-        prefs.edit()
-            .putLong(KEY_FOCUS_END_TIME_MS, nowMs + SESSION_25_MS)
-            .apply()
-    }
-
-    fun getSessionEndMs(): Long = prefs.getLong(KEY_FOCUS_END_TIME_MS, 0L)
-
-    fun isSessionActive(nowMs: Long): Boolean = getSessionEndMs() > nowMs
-
-    fun remainingSessionMs(nowMs: Long): Long = max(0L, getSessionEndMs() - nowMs)
-
-    fun initializeDefaultsIfNeeded(installedPackages: Set<String>) {
+    fun initializeDefaultsIfNeeded() {
         if (prefs.getBoolean(KEY_HAS_INITIALIZED_DEFAULTS, false)) return
-
-        val defaults = DEFAULT_BLOCKED_PACKAGES.intersect(installedPackages)
-
         prefs.edit()
-            .putStringSet(KEY_BLOCKED_PACKAGES, defaults)
+            .putStringSet(KEY_BLOCKED_PACKAGES, DEFAULT_BLOCKED_PACKAGES)
             .putBoolean(KEY_HAS_INITIALIZED_DEFAULTS, true)
             .apply()
     }
 
     companion object {
         private const val PREFS_NAME = "focus_store"
+        private const val KEY_FOCUS_ACTIVE = "focus_mode_active"
+        private const val KEY_FOCUS_START_MS = "focus_start_ms"
         private const val KEY_BLOCKED_PACKAGES = "blocked_packages"
-        private const val KEY_FOCUS_END_TIME_MS = "focus_end_time_ms"
+        private const val KEY_ONBOARDING_DONE = "onboarding_done"
         private const val KEY_HAS_INITIALIZED_DEFAULTS = "has_initialized_defaults"
-
-        const val SESSION_25_MS = 25 * 60 * 1000L
 
         val DEFAULT_BLOCKED_PACKAGES: Set<String> = setOf(
             "com.instagram.android",
             "com.google.android.youtube",
             "com.zhiliaoapp.musically"
+        )
+
+        val BLOCKED_APP_LABELS: Map<String, String> = mapOf(
+            "com.instagram.android" to "Instagram",
+            "com.google.android.youtube" to "YouTube",
+            "com.zhiliaoapp.musically" to "TikTok"
         )
     }
 }

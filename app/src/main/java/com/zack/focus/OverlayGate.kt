@@ -1,6 +1,7 @@
 package com.zack.focus
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
@@ -14,57 +15,62 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.zack.focus.ui.theme.FocusTheme
 
 class OverlayGate(private val context: Context) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var windowManager: WindowManager? = null
     private var overlayView: ComposeView? = null
+    private var lifecycleOwner: OverlayLifecycleOwner? = null
 
     fun isShowing(): Boolean = overlayView != null
 
-    fun show(
-        packageName: String,
-        sessionActive: Boolean,
-        sessionRemainingMs: Long,
-        onContinueRequested: (String) -> Unit,
-        onCloseAppRequested: (String) -> Unit,
-        onStartSessionRequested: (String) -> Unit
-    ) {
+    fun show(packageName: String, onGoBack: () -> Unit) {
         if (overlayView != null) return
 
         mainHandler.post {
             if (overlayView != null) return@post
 
-            windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val owner = OverlayLifecycleOwner().also { it.start() }
+            lifecycleOwner = owner
 
             val view = ComposeView(context).apply {
+                setViewTreeLifecycleOwner(owner)
+                setViewTreeViewModelStoreOwner(owner)
+                setViewTreeSavedStateRegistryOwner(owner)
                 setContent {
-                    MaterialTheme {
-                        OverlayGateScreen(
+                    FocusTheme {
+                        GateOverlayContent(
                             packageName = packageName,
-                            sessionActive = sessionActive,
-                            sessionRemainingMs = sessionRemainingMs,
-                            onContinueRequested = onContinueRequested,
-                            onCloseAppRequested = onCloseAppRequested,
-                            onStartSessionRequested = onStartSessionRequested
+                            onGoBack = onGoBack,
+                            onContinue = {
+                                hide()
+                                val intent = Intent(context, GateActivity::class.java)
+                                    .putExtra(GateActivity.EXTRA_PACKAGE, packageName)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                context.startActivity(intent)
+                            }
                         )
                     }
                 }
@@ -75,14 +81,21 @@ class OverlayGate(private val context: Context) {
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP
-            }
+            ).apply { gravity = Gravity.TOP }
 
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            windowManager = wm
             overlayView = view
-            windowManager?.addView(view, params)
+            runCatching {
+                wm.addView(view, params)
+            }.onFailure {
+                // BadTokenException — overlay permission revoked; reset state cleanly
+                owner.stop()
+                overlayView = null
+                windowManager = null
+            }
         }
     }
 
@@ -90,8 +103,9 @@ class OverlayGate(private val context: Context) {
         mainHandler.post {
             val view = overlayView ?: return@post
             val wm = windowManager ?: return@post
-
-            wm.removeView(view)
+            lifecycleOwner?.stop()
+            lifecycleOwner = null
+            runCatching { wm.removeView(view) }
             overlayView = null
             windowManager = null
         }
@@ -99,114 +113,88 @@ class OverlayGate(private val context: Context) {
 }
 
 @Composable
-private fun OverlayGateScreen(
+private fun GateOverlayContent(
     packageName: String,
-    sessionActive: Boolean,
-    sessionRemainingMs: Long,
-    onContinueRequested: (String) -> Unit,
-    onCloseAppRequested: (String) -> Unit,
-    onStartSessionRequested: (String) -> Unit
+    onGoBack: () -> Unit,
+    onContinue: () -> Unit
 ) {
-    var countdownRunning by remember { mutableStateOf(false) }
-    var secondsRemaining by remember { mutableIntStateOf(CONTINUE_DELAY_SECONDS) }
-
-    LaunchedEffect(countdownRunning, sessionActive) {
-        if (sessionActive || !countdownRunning) {
-            if (!sessionActive) secondsRemaining = CONTINUE_DELAY_SECONDS
-            return@LaunchedEffect
-        }
-
-        while (countdownRunning && secondsRemaining > 0) {
-            delay(1000L)
-            secondsRemaining -= 1
-        }
-
-        if (countdownRunning && secondsRemaining == 0) {
-            onContinueRequested(packageName)
-        }
-    }
-
-    val progress = ((CONTINUE_DELAY_SECONDS - secondsRemaining).coerceAtLeast(0)).toFloat() /
-        CONTINUE_DELAY_SECONDS.toFloat()
+    val appLabel = FocusStore.BLOCKED_APP_LABELS[packageName] ?: packageName
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(32.dp),
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = stringResource(R.string.overlay_title),
-                style = MaterialTheme.typography.headlineSmall
+                text = "Take a breath.",
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.primary
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(16.dp))
             Text(
-                text = stringResource(R.string.overlay_subtitle),
-                style = MaterialTheme.typography.titleMedium
+                text = "You opened $appLabel, an app you chose to block.",
+                style = MaterialTheme.typography.titleLarge
             )
-            Spacer(Modifier.height(8.dp))
-            Text(packageName, style = MaterialTheme.typography.bodySmall)
-
-            Spacer(Modifier.height(24.dp))
-            LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(12.dp))
-
-            if (sessionActive) {
-                Text(
-                    text = stringResource(
-                        R.string.overlay_focus_active_remaining,
-                        formatDurationMmSs(sessionRemainingMs)
-                    ),
-                    style = MaterialTheme.typography.bodyLarge
-                )
-
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = { onCloseAppRequested(packageName) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(R.string.overlay_close_app))
-                }
-            } else {
-                val continueLabel = if (countdownRunning) {
-                    stringResource(R.string.overlay_continue_countdown, secondsRemaining)
-                } else {
-                    stringResource(R.string.overlay_continue_delay, CONTINUE_DELAY_SECONDS)
-                }
-
-                Button(
-                    onClick = { countdownRunning = true },
-                    enabled = !countdownRunning,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(continueLabel)
-                }
-
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { onCloseAppRequested(packageName) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(R.string.overlay_close_app))
-                }
-
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { onStartSessionRequested(packageName) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(R.string.overlay_start_focus))
-                }
-            }
-
+            Text(
+                text = "Is this really what you want right now?",
+                style = MaterialTheme.typography.bodyLarge
+            )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = stringResource(R.string.overlay_footer),
-                style = MaterialTheme.typography.bodySmall
+                text = MotivationMessages.getRandom(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.secondary
             )
+            Spacer(Modifier.height(40.dp))
+
+            Button(
+                onClick = onGoBack,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Go Back")
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = onContinue,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text("I Still Want to Continue")
+            }
         }
     }
 }
 
-private const val CONTINUE_DELAY_SECONDS = 15
+private class OverlayLifecycleOwner :
+    LifecycleOwner,
+    ViewModelStoreOwner,
+    SavedStateRegistryOwner {
+
+    private val registry = LifecycleRegistry(this)
+    override val lifecycle: Lifecycle = registry
+
+    private val store = ViewModelStore()
+    override val viewModelStore: ViewModelStore = store
+
+    private val controller = SavedStateRegistryController.create(this)
+    override val savedStateRegistry: SavedStateRegistry = controller.savedStateRegistry
+
+    fun start() {
+        controller.performRestore(null)
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
+
+    fun stop() {
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        store.clear()
+    }
+}
