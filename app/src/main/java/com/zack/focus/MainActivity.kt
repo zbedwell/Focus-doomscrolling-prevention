@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
 
         val focusStore = FocusStore(this)
         focusStore.initializeDefaultsIfNeeded()
+        PremiumManager.init(focusStore)
 
         setContent {
             FocusTheme {
@@ -78,6 +79,7 @@ private sealed class Screen {
     object Onboarding : Screen()
     object Home : Screen()
     object EndFocus : Screen()
+    object Upgrade : Screen()
 }
 
 @Composable
@@ -127,7 +129,12 @@ private fun AppRoot(focusStore: FocusStore) {
             )
             is Screen.Home -> HomeScreen(
                 focusStore = focusStore,
-                onEndFocus = { screen = Screen.EndFocus }
+                onEndFocus = { screen = Screen.EndFocus },
+                onUpgrade = { screen = Screen.Upgrade }
+            )
+            is Screen.Upgrade -> UpgradeScreen(
+                focusStore = focusStore,
+                onBack = { screen = Screen.Home }
             )
             is Screen.EndFocus -> EndFocusScreen(
                 onCancelled = { screen = Screen.Home },
@@ -241,11 +248,19 @@ private fun PermissionStep(
 // ─── Home ─────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun HomeScreen(focusStore: FocusStore, onEndFocus: () -> Unit) {
+private fun HomeScreen(
+    focusStore: FocusStore,
+    onEndFocus: () -> Unit,
+    onUpgrade: () -> Unit
+) {
     val context = LocalContext.current
     var focusActive by remember { mutableStateOf(focusStore.isFocusModeActive()) }
     val message = remember { MotivationMessages.getRandom() }
-    var blockedPackages by remember { mutableStateOf(focusStore.getBlockedPackages()) }
+    val allApps = FocusStore.DEFAULT_BLOCKED_PACKAGES.toList()
+    var modes by remember {
+        mutableStateOf(allApps.associateWith { focusStore.getBlockMode(it) })
+    }
+    val isPremium = PremiumManager.isPremium()
 
     Column(
         modifier = Modifier
@@ -284,7 +299,7 @@ private fun HomeScreen(focusStore: FocusStore, onEndFocus: () -> Unit) {
             }
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(16.dp))
 
         if (!focusActive) {
             Button(
@@ -310,11 +325,13 @@ private fun HomeScreen(focusStore: FocusStore, onEndFocus: () -> Unit) {
             }
         }
 
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(24.dp))
 
         // Motivation message
-        Card(modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
             Column(Modifier.padding(16.dp)) {
                 Text(message, style = MaterialTheme.typography.bodyLarge)
             }
@@ -322,49 +339,79 @@ private fun HomeScreen(focusStore: FocusStore, onEndFocus: () -> Unit) {
 
         Spacer(Modifier.height(24.dp))
 
-        // Blocked apps toggles
-        val allApps = FocusStore.DEFAULT_BLOCKED_PACKAGES.toList()
-        val allChecked = allApps.all { it in blockedPackages }
-
+        // Blocked apps card
         Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                // Block All master switch
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+
+                // Block All (premium)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Block all", style = MaterialTheme.typography.titleMedium)
-                    Switch(
-                        checked = allChecked,
-                        onCheckedChange = { on ->
-                            val updated = if (on) allApps.toSet() else emptySet()
-                            focusStore.setBlockedPackages(updated)
-                            blockedPackages = updated
+                    Column {
+                        Text("Block all", style = MaterialTheme.typography.titleMedium)
+                        if (!isPremium) {
+                            Text("Premium", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary)
                         }
-                    )
-                }
-
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-
-                // Per-app switches
-                allApps.forEach { pkg ->
-                    val label = FocusStore.BLOCKED_APP_LABELS[pkg] ?: pkg
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                    if (isPremium) {
+                        val allBlocked = allApps.all { modes[it] == BlockMode.FULL }
                         Switch(
-                            checked = pkg in blockedPackages,
+                            checked = allBlocked,
                             onCheckedChange = { on ->
-                                val updated = if (on) blockedPackages + pkg
-                                              else blockedPackages - pkg
-                                focusStore.setBlockedPackages(updated)
-                                blockedPackages = updated
+                                val newMode = if (on) BlockMode.FULL else BlockMode.OFF
+                                focusStore.setAllBlockModes(newMode)
+                                modes = allApps.associateWith { newMode }
                             }
                         )
+                    } else {
+                        OutlinedButton(onClick = onUpgrade) { Text("Upgrade") }
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // Per-app rows: Off | Block | Friends Only
+                allApps.forEach { pkg ->
+                    val label = FocusStore.BLOCKED_APP_LABELS[pkg] ?: pkg
+                    val currentMode = modes[pkg] ?: BlockMode.FULL
+
+                    Column(Modifier.padding(vertical = 6.dp)) {
+                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ModeChip(
+                                label = "Off",
+                                selected = currentMode == BlockMode.OFF,
+                                onClick = {
+                                    focusStore.setBlockMode(pkg, BlockMode.OFF)
+                                    modes = modes + (pkg to BlockMode.OFF)
+                                }
+                            )
+                            ModeChip(
+                                label = "Block",
+                                selected = currentMode == BlockMode.FULL,
+                                onClick = {
+                                    focusStore.setBlockMode(pkg, BlockMode.FULL)
+                                    modes = modes + (pkg to BlockMode.FULL)
+                                }
+                            )
+                            ModeChip(
+                                label = if (isPremium) "Friends Only" else "Friends Only 🔒",
+                                selected = currentMode == BlockMode.FRIENDS_ONLY,
+                                onClick = {
+                                    if (isPremium) {
+                                        focusStore.setBlockMode(pkg, BlockMode.FRIENDS_ONLY)
+                                        modes = modes + (pkg to BlockMode.FRIENDS_ONLY)
+                                    } else {
+                                        onUpgrade()
+                                    }
+                                },
+                                muted = !isPremium
+                            )
+                        }
                     }
                 }
             }
@@ -386,6 +433,116 @@ private fun HomeScreen(focusStore: FocusStore, onEndFocus: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall)
         }
 
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+@Composable
+private fun ModeChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    muted: Boolean = false
+) {
+    val containerColor = when {
+        selected -> MaterialTheme.colorScheme.primary
+        muted -> MaterialTheme.colorScheme.surfaceVariant
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val contentColor = when {
+        selected -> MaterialTheme.colorScheme.onPrimary
+        muted -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = contentColor
+        ),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+// ─── Upgrade Screen ───────────────────────────────────────────────────────────
+
+@Composable
+private fun UpgradeScreen(focusStore: FocusStore, onBack: () -> Unit) {
+    BackHandler { onBack() }
+
+    var isPremium by remember { mutableStateOf(focusStore.isPremium()) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.Top
+    ) {
+        Spacer(Modifier.height(32.dp))
+
+        Text("Focus Premium", style = MaterialTheme.typography.displaySmall,
+            color = MaterialTheme.colorScheme.primary)
+        Text("\$5 / month", style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.secondary)
+
+        Spacer(Modifier.height(24.dp))
+
+        listOf(
+            "Block All" to "One switch to block every app at once.",
+            "Friends Only" to "Allow shared links and DMs from friends while blocking the main feed. (Reels, Shorts, For You page still blocked.)",
+            "More features coming" to "Scheduled focus sessions, accountability partners, and usage stats."
+        ).forEach { (title, desc) ->
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(desc, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(32.dp))
+
+        if (isPremium) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Text("Premium is active. Thank you for supporting Focus.",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyLarge)
+            }
+        } else {
+            Button(
+                onClick = {
+                    // TODO: replace with Google Play Billing subscription launch.
+                    // Product ID: "focus_premium_monthly"
+                    // For now, grant directly for testing.
+                    PremiumManager.grantPremium()
+                    isPremium = true
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Subscribe for \$5 / month", style = MaterialTheme.typography.titleMedium)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Payment handled by Google Play. Cancel anytime.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.secondary
+            )
+        }
+
+        Spacer(Modifier.height(24.dp))
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+            Text("Back")
+        }
         Spacer(Modifier.height(32.dp))
     }
 }

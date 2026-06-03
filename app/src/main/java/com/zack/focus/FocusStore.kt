@@ -4,9 +4,13 @@ import android.content.Context
 import java.util.Locale
 import kotlin.math.max
 
+enum class BlockMode { OFF, FULL, FRIENDS_ONLY }
+
 class FocusStore(context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    // ── Focus Mode ────────────────────────────────────────────────────────────
 
     fun isFocusModeActive(): Boolean = prefs.getBoolean(KEY_FOCUS_ACTIVE, false)
 
@@ -18,12 +22,39 @@ class FocusStore(context: Context) {
 
     fun getFocusStartMs(): Long = prefs.getLong(KEY_FOCUS_START_MS, 0L)
 
-    fun getBlockedPackages(): Set<String> =
-        prefs.getStringSet(KEY_BLOCKED_PACKAGES, null)?.toSet() ?: DEFAULT_BLOCKED_PACKAGES
+    // ── Per-app block mode ────────────────────────────────────────────────────
 
-    fun setBlockedPackages(packages: Set<String>) {
-        prefs.edit().putStringSet(KEY_BLOCKED_PACKAGES, packages).apply()
+    fun getBlockMode(packageName: String): BlockMode {
+        val stored = prefs.getString("$KEY_BLOCK_MODE_PREFIX$packageName", null)
+            ?: return if (packageName in DEFAULT_BLOCKED_PACKAGES) BlockMode.FULL else BlockMode.OFF
+        return runCatching { BlockMode.valueOf(stored) }.getOrDefault(BlockMode.FULL)
     }
+
+    fun setBlockMode(packageName: String, mode: BlockMode) {
+        prefs.edit().putString("$KEY_BLOCK_MODE_PREFIX$packageName", mode.name).apply()
+    }
+
+    fun setAllBlockModes(mode: BlockMode) {
+        val edit = prefs.edit()
+        DEFAULT_BLOCKED_PACKAGES.forEach { pkg ->
+            edit.putString("$KEY_BLOCK_MODE_PREFIX$pkg", mode.name)
+        }
+        edit.apply()
+    }
+
+    // Legacy accessor kept for WatcherService notification text and onboarding compat.
+    fun getBlockedPackages(): Set<String> =
+        DEFAULT_BLOCKED_PACKAGES.filter { getBlockMode(it) != BlockMode.OFF }.toSet()
+
+    // ── Premium ───────────────────────────────────────────────────────────────
+
+    fun isPremium(): Boolean = prefs.getBoolean(KEY_PREMIUM, false)
+
+    fun setPremium(premium: Boolean) {
+        prefs.edit().putBoolean(KEY_PREMIUM, premium).apply()
+    }
+
+    // ── Misc ──────────────────────────────────────────────────────────────────
 
     fun isOnboardingComplete(): Boolean = prefs.getBoolean(KEY_ONBOARDING_DONE, false)
 
@@ -34,18 +65,19 @@ class FocusStore(context: Context) {
     fun initializeDefaultsIfNeeded() {
         if (prefs.getBoolean(KEY_HAS_INITIALIZED_DEFAULTS, false)) return
         prefs.edit()
-            .putStringSet(KEY_BLOCKED_PACKAGES, DEFAULT_BLOCKED_PACKAGES)
             .putBoolean(KEY_HAS_INITIALIZED_DEFAULTS, true)
             .apply()
+        // BlockModes default to FULL for all three apps via getBlockMode() fallback.
     }
 
     companion object {
         private const val PREFS_NAME = "focus_store"
         private const val KEY_FOCUS_ACTIVE = "focus_mode_active"
         private const val KEY_FOCUS_START_MS = "focus_start_ms"
-        private const val KEY_BLOCKED_PACKAGES = "blocked_packages"
         private const val KEY_ONBOARDING_DONE = "onboarding_done"
         private const val KEY_HAS_INITIALIZED_DEFAULTS = "has_initialized_defaults"
+        private const val KEY_BLOCK_MODE_PREFIX = "block_mode_"
+        private const val KEY_PREMIUM = "is_premium"
 
         val DEFAULT_BLOCKED_PACKAGES: Set<String> = setOf(
             "com.instagram.android",

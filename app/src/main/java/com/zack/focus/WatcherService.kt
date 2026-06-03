@@ -123,7 +123,7 @@ class WatcherService : Service() {
         private const val TAG = "FocusWatcher"
         private const val CHANNEL_ID = "focus_watcher"
         private const val NOTIF_ID = 1001
-        private const val POLL_MS = 800L
+        private const val POLL_MS = 400L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

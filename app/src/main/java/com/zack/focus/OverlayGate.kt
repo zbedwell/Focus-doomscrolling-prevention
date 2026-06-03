@@ -56,6 +56,8 @@ class OverlayGate(private val context: Context) {
             lifecycleOwner = owner
 
             val view = ComposeView(context).apply {
+                // Paint black immediately so no app content is visible before Compose renders.
+                setBackgroundColor(android.graphics.Color.BLACK)
                 setViewTreeLifecycleOwner(owner)
                 setViewTreeViewModelStoreOwner(owner)
                 setViewTreeSavedStateRegistryOwner(owner)
