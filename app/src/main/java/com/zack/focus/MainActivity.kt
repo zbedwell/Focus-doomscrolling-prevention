@@ -56,6 +56,8 @@ class MainActivity : ComponentActivity() {
     private val requestNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
+    private lateinit var billingManager: BillingManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -67,11 +69,29 @@ class MainActivity : ComponentActivity() {
         focusStore.initializeDefaultsIfNeeded()
         PremiumManager.init(focusStore)
 
+        billingManager = BillingManager(this) { isPremium ->
+            if (isPremium) PremiumManager.grantPremium() else PremiumManager.revokePremium()
+        }
+        billingManager.connect()
+
         setContent {
             FocusTheme {
-                AppRoot(focusStore)
+                AppRoot(
+                    focusStore = focusStore,
+                    onSubscribe = { billingManager.launchBillingFlow(this) }
+                )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        billingManager.checkExistingSubscription()
+    }
+
+    override fun onDestroy() {
+        billingManager.disconnect()
+        super.onDestroy()
     }
 }
 
@@ -83,7 +103,7 @@ private sealed class Screen {
 }
 
 @Composable
-private fun AppRoot(focusStore: FocusStore) {
+private fun AppRoot(focusStore: FocusStore, onSubscribe: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -134,7 +154,8 @@ private fun AppRoot(focusStore: FocusStore) {
             )
             is Screen.Upgrade -> UpgradeScreen(
                 focusStore = focusStore,
-                onBack = { screen = Screen.Home }
+                onBack = { screen = Screen.Home },
+                onSubscribe = onSubscribe
             )
             is Screen.EndFocus -> EndFocusScreen(
                 onCancelled = { screen = Screen.Home },
@@ -469,7 +490,7 @@ private fun ModeChip(
 // ─── Upgrade Screen ───────────────────────────────────────────────────────────
 
 @Composable
-private fun UpgradeScreen(focusStore: FocusStore, onBack: () -> Unit) {
+private fun UpgradeScreen(focusStore: FocusStore, onBack: () -> Unit, onSubscribe: () -> Unit) {
     BackHandler { onBack() }
 
     var isPremium by remember { mutableStateOf(focusStore.isPremium()) }
@@ -520,16 +541,10 @@ private fun UpgradeScreen(focusStore: FocusStore, onBack: () -> Unit) {
             }
         } else {
             Button(
-                onClick = {
-                    // TODO: replace with Google Play Billing subscription launch.
-                    // Product ID: "focus_premium_monthly"
-                    // For now, grant directly for testing.
-                    PremiumManager.grantPremium()
-                    isPremium = true
-                },
+                onClick = onSubscribe,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Subscribe for \$5 / month", style = MaterialTheme.typography.titleMedium)
+                Text("Subscribe for \$4.99 / month", style = MaterialTheme.typography.titleMedium)
             }
             Spacer(Modifier.height(8.dp))
             Text(

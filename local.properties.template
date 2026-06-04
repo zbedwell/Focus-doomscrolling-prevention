@@ -1,0 +1,12 @@
+# Copy this file to local.properties and fill in your keystore details.
+# local.properties is gitignored — never commit signing credentials.
+#
+# To generate a keystore (run once, keep the file safe forever):
+#   keytool -genkey -v -keystore focus-release.keystore -alias focus \
+#           -keyalg RSA -keysize 2048 -validity 10000
+#
+sdk.dir=C\:\\Users\\YOUR_USERNAME\\AppData\\Local\\Android\\Sdk
+KEYSTORE_PATH=../focus-release.keystore
+KEYSTORE_PASSWORD=your_keystore_password
+KEY_ALIAS=focus
+KEY_PASSWORD=your_key_password
